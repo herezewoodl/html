@@ -1,0 +1,406 @@
+// Backend API avec Express.js + PostgreSQL pour WoodBank const express = require('express'); const cors = require('cors'); const bcrypt = require('bcrypt'); const jwt = require('jsonwebtoken'); const { Pool } = require('pg');
+
+const app = express(); app.use(cors()); app.use(express.json());
+
+const PORT = process.env.PORT || 4000; const SECRET_KEY = 'woodbank-secret-key';
+
+// Connexion à PostgreSQL const pool = new Pool({ user: 'postgres', host: 'localhost', database: 'woodbank', password: 'password', port: 5432, });
+
+// Création des tables (à exécuter une seule fois) (async () => { await pool.query(CREATE TABLE IF NOT EXISTS users ( id SERIAL PRIMARY KEY, email VARCHAR(255) UNIQUE NOT NULL, password TEXT NOT NULL, balance NUMERIC DEFAULT 0 ); CREATE TABLE IF NOT EXISTS transactions ( id SERIAL PRIMARY KEY, sender_id INTEGER REFERENCES users(id), receiver_id INTEGER REFERENCES users(id), amount NUMERIC, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP );); })();
+
+// Enregistrement app.post('/api/register', async (req, res) => { const { email, password } = req.body; const hashedPassword = await bcrypt.hash(password, 10); try { await pool.query('INSERT INTO users (email, password, balance) VALUES ($1, $2, $3)', [email, hashedPassword, 1000]); res.status(201).json({ message: 'User registered successfully' }); } catch (err) { res.status(400).json({ error: 'User already exists' }); } });
+
+// Connexion app.post('/api/login', async (req, res) => { const { email, password } = req.body; const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]); const user = result.rows[0]; if (!user) return res.status(400).json({ error: 'User not found' });
+
+const isMatch = await bcrypt.compare(password, user.password); if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
+
+const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '1h' }); res.json({ token }); });
+
+// Middleware d'authentification function authenticateToken(req, res, next) { const authHeader = req.headers['authorization']; const token = authHeader && authHeader.split(' ')[1]; if (!token) return res.sendStatus(401);
+
+jwt.verify(token, SECRET_KEY, (err, user) => { if (err) return res.sendStatus(403); req.user = user; next(); }); }
+
+// Tableau de bord app.get('/api/dashboard', authenticateToken, async (req, res) => { const result = await pool.query('SELECT balance FROM users WHERE id = $1', [req.user.id]); res.json({ message: Welcome, ${req.user.email}!, balance: result.rows[0].balance }); });
+
+// Virement app.post('/api/transfer', authenticateToken, async (req, res) => { const { recipient_email, amount } = req.body; const senderId = req.user.id;
+
+try { await pool.query('BEGIN');
+
+const sender = await pool.query('SELECT balance FROM users WHERE id = $1', [senderId]);
+if (sender.rows[0].balance < amount) throw new Error('Insufficient funds');
+
+const recipient = await pool.query('SELECT id FROM users WHERE email = $1', [recipient_email]);
+if (recipient.rows.length === 0) throw new Error('Recipient not found');
+const recipientId = recipient.rows[0].id;
+
+await pool.query('UPDATE users SET balance = balance - $1 WHERE id = $2', [amount, senderId]);
+await pool.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [amount, recipientId]);
+await pool.query('INSERT INTO transactions (sender_id, receiver_id, amount) VALUES ($1, $2, $3)', [senderId, recipientId, amount]);
+
+await pool.query('COMMIT');
+res.json({ message: 'Transfer successful' });
+
+} catch (err) { await pool.query('ROLLBACK'); res.status(400).json({ error: err.message }); } });
+
+// Historique des transactions app.get('/api/transactions', authenticateToken, async (req, res) => { const result = await pool.query( 'SELECT t.amount, t.created_at, u.email AS recipient_email FROM transactions t JOIN users u ON t.receiver_id = u.id WHERE t.sender_id = $1 ORDER BY t.created_at DESC', [req.user.id] ); res.json(result.rows); });
+
+app.listen(PORT, () => { console.log(WoodBank API running on port ${PORT}); });
+
+-- Table users
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    balance DECIMAL(10, 2) DEFAULT 0.00
+);
+
+-- Table transactions
+CREATE TABLE transactions (
+    id SERIAL PRIMARY KEY,
+    sender_id INT REFERENCES users(id),
+    receiver_id INT REFERENCES users(id),
+    amount DECIMAL(10, 2) NOT NULL,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+const express = require('express');
+const cors = require('cors');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const { Pool } = require('pg');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const PORT = process.env.PORT || 4000;
+const SECRET_KEY = 'woodbank-secret-key';
+
+// Configure PostgreSQL client
+const pool = new Pool({
+  user: 'your_username', // Remplace par ton nom d'utilisateur PostgreSQL
+  host: 'localhost', // ou l'adresse de ton serveur PostgreSQL
+  database: 'woodbank', // Remplace par le nom de ta base de données
+  password: 'your_password', // Remplace par ton mot de passe PostgreSQL
+  port: 5432, // Par défaut
+});
+
+// Enregistrement d'un utilisateur
+app.post('/api/register', async (req, res) => {
+  const { email, password } = req.body;
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  const query = 'INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id';
+  try {
+    const result = await pool.query(query, [email, hashedPassword]);
+    res.status(201).json({ message: 'User registered successfully', id: result.rows[0].id });
+  } catch (err) {
+    res.status(500).json({ error: 'Error registering user' });
+  }
+});
+
+// Connexion d'un utilisateur
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  const query = 'SELECT * FROM users WHERE email = $1';
+  try {
+    const result = await pool.query(query, [email]);
+    if (result.rows.length === 0) return res.status(400).json({ error: 'User not found' });
+
+    const user = result.rows[0];
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '1h' });
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ error: 'Error logging in' });
+  }
+});
+
+// Fonction de virement
+app.post('/api/transfer', authenticateToken, async (req, res) => {
+  const { receiver_id, amount } = req.body;
+  const sender_id = req.user.id;
+
+  if (amount <= 0) return res.status(400).json({ error: 'Amount must be greater than zero' });
+
+  // Vérification du solde de l'expéditeur
+  const checkBalanceQuery = 'SELECT balance FROM users WHERE id = $1';
+  try {
+    const result = await pool.query(checkBalanceQuery, [sender_id]);
+    const sender = result.rows[0];
+    if (sender.balance < amount) return res.status(400).json({ error: 'Insufficient balance' });
+
+    // Mettre à jour les soldes
+    const updateSenderQuery = 'UPDATE users SET balance = balance - $1 WHERE id = $2';
+    const updateReceiverQuery = 'UPDATE users SET balance = balance + $1 WHERE id = $2';
+
+    await pool.query(updateSenderQuery, [amount, sender_id]);
+    await pool.query(updateReceiverQuery, [amount, receiver_id]);
+
+    // Enregistrer la transaction
+    const transactionQuery = 'INSERT INTO transactions (sender_id, receiver_id, amount) VALUES ($1, $2, $3)';
+    await pool.query(transactionQuery, [sender_id, receiver_id, amount]);
+
+    res.json({ message: 'Transfer successful' });
+  } catch (err) {
+    res.status(500).json({ error: 'Error processing transfer' });
+  }
+});
+
+// Historique des transactions
+app.get('/api/transactions', authenticateToken, async (req, res) => {
+  const user_id = req.user.id;
+
+  const query = 'SELECT * FROM transactions WHERE sender_id = $1 OR receiver_id = $1 ORDER BY timestamp DESC';
+  try {
+    const result = await pool.query(query, [user_id]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Error fetching transactions' });
+  }
+});
+
+// Middleware d'authentification
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.sendStatus(401);
+
+  jwt.verify(token, SECRET_KEY, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  const express = require('express');
+const cors = require('cors');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const { Pool } = require('pg');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const PORT = process.env.PORT || 4000;
+const SECRET_KEY = 'woodbank-secret-key';
+
+// Configure PostgreSQL client
+const pool = new Pool({
+  user: 'your_username', // Remplace par ton nom d'utilisateur PostgreSQL
+  host: 'localhost', // ou l'adresse de ton serveur PostgreSQL
+  database: 'woodbank', // Remplace par le nom de ta base de données
+  password: 'your_password', // Remplace par ton mot de passe PostgreSQL
+  port: 5432, // Par défaut
+});
+
+// Enregistrement d'un utilisateur
+app.post('/api/register', async (req, res) => {
+  const { email, password } = req.body;
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  const query = 'INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id';
+  try {
+    const result = await pool.query(query, [email, hashedPassword]);
+    res.status(201).json({ message: 'User registered successfully', id: result.rows[0].id });
+  } catch (err) {
+    res.status(500).json({ error: 'Error registering user' });
+  }
+});
+
+// Connexion d'un utilisateur
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  const query = 'SELECT * FROM users WHERE email = $1';
+  try {
+    const result = await pool.query(query, [email]);
+    if (result.rows.length === 0) return res.status(400).json({ error: 'User not found' });
+
+    const user = result.rows[0];
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '1h' });
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ error: 'Error logging in' });
+  }
+});
+
+// Fonction de virement
+app.post('/api/transfer', authenticateToken, async (req, res) => {
+  const { receiver_id, amount } = req.body;
+  const sender_id = req.user.id;
+
+  if (amount <= 0) return res.status(400).json({ error: 'Amount must be greater than zero' });
+
+  // Vérification du solde de l'expéditeur
+  const checkBalanceQuery = 'SELECT balance FROM users WHERE id = $1';
+  try {
+    const result = await pool.query(checkBalanceQuery, [sender_id]);
+    const sender = result.rows[0];
+    if (sender.balance < amount) return res.status(400).json({ error: 'Insufficient balance' });
+
+    // Mettre à jour les soldes
+    const updateSenderQuery = 'UPDATE users SET balance = balance - $1 WHERE id = $2';
+    const updateReceiverQuery = 'UPDATE users SET balance = balance + $1 WHERE id = $2';
+
+    await pool.query(updateSenderQuery, [amount, sender_id]);
+    await pool.query(updateReceiverQuery, [amount, receiver_id]);
+
+    // Enregistrer la transaction
+    const transactionQuery = 'INSERT INTO transactions (sender_id, receiver_id, amount) VALUES ($1, $2, $3)';
+    await pool.query(transactionQuery, [sender_id, receiver_id, amount]);
+
+    res.json({ message: 'Transfer successful' });
+  } catch (err) {
+    res.status(500).json({ error: 'Error processing transfer' });
+  }
+});
+
+// Historique des transactions
+app.get('/api/transactions', authenticateToken, async (req, res) => {
+  const user_id = req.user.id;
+
+  const query = 'SELECT * FROM transactions WHERE sender_id = $1 OR receiver_id = $1 ORDER BY timestamp DESC';
+  try {
+    const result = await pool.query(query, [user_id]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Error fetching transactions' });
+  }
+});
+
+// Middleware d'authentification
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.sendStatus(401);
+
+  jwt.verify(token, SECRET_KEY, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+}
+
+app.listen(PORT, () => {
+  console.log(`WoodBank API listening on port ${PORT}`);
+});
+const express = require('express');
+const cors = require('cors');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const { Pool } = require('pg');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const PORT = process.env.PORT || 4000;
+const SECRET_KEY = 'woodbank-secret-key';
+
+// Configure PostgreSQL client
+const pool = new Pool({
+  user: 'your_username', // Remplace par ton nom d'utilisateur PostgreSQL
+  host: 'localhost', // ou l'adresse de ton serveur PostgreSQL
+  database: 'woodbank', // Remplace par le nom de ta base de données
+  password: 'your_password', // Remplace par ton mot de passe PostgreSQL
+  port: 5432, // Par défaut
+});
+
+// Enregistrement d'un utilisateur
+app.post('/api/register', async (req, res) => {
+  const { email, password } = req.body;
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  const query = 'INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id';
+  try {
+    const result = await pool.query(query, [email, hashedPassword]);
+    res.status(201).json({ message: 'User registered successfully', id: result.rows[0].id });
+  } catch (err) {
+    res.status(500).json({ error: 'Error registering user' });
+  }
+});
+
+// Connexion d'un utilisateur
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  const query = 'SELECT * FROM users WHERE email = $1';
+  try {
+    const result = await pool.query(query, [email]);
+    if (result.rows.length === 0) return res.status(400).json({ error: 'User not found' });
+
+    const user = result.rows[0];
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '1h' });
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ error: 'Error logging in' });
+  }
+});
+
+// Fonction de virement
+app.post('/api/transfer', authenticateToken, async (req, res) => {
+  const { receiver_id, amount } = req.body;
+  const sender_id = req.user.id;
+
+  if (amount <= 0) return res.status(400).json({ error: 'Amount must be greater than zero' });
+
+  // Vérification du solde de l'expéditeur
+  const checkBalanceQuery = 'SELECT balance FROM users WHERE id = $1';
+  try {
+    const result = await pool.query(checkBalanceQuery, [sender_id]);
+    const sender = result.rows[0];
+    if (sender.balance < amount) return res.status(400).json({ error: 'Insufficient balance' });
+
+    // Mettre à jour les soldes
+    const updateSenderQuery = 'UPDATE users SET balance = balance - $1 WHERE id = $2';
+    const updateReceiverQuery = 'UPDATE users SET balance = balance + $1 WHERE id = $2';
+
+    await pool.query(updateSenderQuery, [amount, sender_id]);
+    await pool.query(updateReceiverQuery, [amount, receiver_id]);
+
+    // Enregistrer la transaction
+    const transactionQuery = 'INSERT INTO transactions (sender_id, receiver_id, amount) VALUES ($1, $2, $3)';
+    await pool.query(transactionQuery, [sender_id, receiver_id, amount]);
+
+    res.json({ message: 'Transfer successful' });
+  } catch (err) {
+    res.status(500).json({ error: 'Error processing transfer' });
+  }
+});
+
+// Historique des transactions
+app.get('/api/transactions', authenticateToken, async (req, res) => {
+  const user_id = req.user.id;
+
+  const query = 'SELECT * FROM transactions WHERE sender_id = $1 OR receiver_id = $1 ORDER BY timestamp DESC';
+  try {
+    const result = await pool.query(query, [user_id]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Error fetching transactions' });
+  }
+});
+
+// Middleware d'authentification
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.sendStatus(401);
+
+  jwt.verify(token, SECRET_KEY, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+}
+
+app.listen(PORT, () => {
+  console.log(`WoodBank API listening on port ${PORT}`);
+});
